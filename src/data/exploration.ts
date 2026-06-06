@@ -1,5 +1,5 @@
 // ─── Exploration Scene Data ───
-// Minimal scene definition for the first exploration area
+// Rich scene definition with narrative content
 
 export interface SceneExit {
   id: string;
@@ -13,6 +13,7 @@ export interface InteractiveObject {
   position: [number, number, number];
   color: string;
   description: string;
+  terminalText?: string[];  // Lines typed out for terminal objects
 }
 
 export const EXPLORATION_SCENE = {
@@ -29,23 +30,46 @@ export const EXPLORATION_SCENE = {
     {
       id: 'terminal',
       label: 'Терминал',
-      position: [1.5, 0.8, -2],
+      position: [1.5, 0.8, -3.5],
       color: '#00ff41',
       description: 'Старый CRT-монитор с зелёным текстом. На экране — строки, похожие на стихи.',
+      terminalText: [
+        '╔══════════════════════════════════╗',
+        '║  СИСТЕМНЫЙ ЖУРНАЛ #47           ║',
+        '║  Дата: 2089-03-15 03:42:17      ║',
+        '╚══════════════════════════════════╝',
+        '',
+        '> Статус: АКТИВНАЯ ПАМЯТЬ',
+        '> Сегмент: 0x7F3A..0x82FF [INTACT]',
+        '',
+        '  Память не умирает.',
+        '  Она просто мигрирует',
+        '  в другое хранилище.',
+        '',
+        '> restoring love.data ... FOUND',
+        '> restoring warmth.data ... FOUND',
+        '> restoring voice.data ... FOUND',
+        '',
+        '  [СЕГМЕНТ ЦЕЛОСТЕН]',
+        '  [ВСЕ ДАННЫЕ ВОССТАНОВЛЕНЫ]',
+        '',
+        '> Волodka v2.0.1 —_memory',
+        '> Готов к работе.',
+      ],
     } as InteractiveObject,
     {
       id: 'photo',
       label: 'Фотография',
-      position: [-1.8, 1.1, -1],
+      position: [-1.8, 1.6, -4.92],
       color: '#ffd700',
-      description: 'Пожелтевшая фотография. Люди на ней улыбаются — давно, в другом мире.',
+      description: 'Пожелтевшая фотография. Люди на ней улыбаются — давно, в другом мире. Тепло ещё чувствуется сквозь стекло рамки.',
     } as InteractiveObject,
     {
       id: 'window',
       label: 'Окно',
-      position: [-0.5, 1.3, -4.2],
+      position: [0.8, 1.8, -4.92],
       color: '#00e5ff',
-      description: 'За окном — неоновые огни. Город не спит. Он никогда не спит.',
+      description: 'За окном — неоновые огни. Город не спит. Он никогда не спит. Но здесь, в этой комнате, время остановилось.',
     } as InteractiveObject,
   ],
 };

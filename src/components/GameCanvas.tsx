@@ -64,10 +64,7 @@ function TransitionOverlay() {
   }, [transitioning]);
 
   return (
-    <div
-      className="transition-overlay"
-      style={{ opacity }}
-    />
+    <div className="transition-overlay" style={{ opacity }} />
   );
 }
 
@@ -91,21 +88,141 @@ function IntroHUD() {
   );
 }
 
+// ─── Terminal Overlay (typewriter effect) ───
+function TerminalOverlay({ lines, onClose }: { lines: string[]; onClose: () => void }) {
+  const [displayedLines, setDisplayedLines] = useState<number>(0);
+  const [displayedChars, setDisplayedChars] = useState<number>(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (displayedLines >= lines.length) return;
+
+    const currentLine = lines[displayedLines];
+    if (!currentLine && currentLine !== '') {
+      setDisplayedLines(prev => prev + 1);
+      setDisplayedChars(0);
+      return;
+    }
+
+    if (displayedChars < currentLine.length) {
+      const delay = currentLine[displayedChars] === ' ' ? 20 : 30 + Math.random() * 25;
+      const timer = setTimeout(() => {
+        setDisplayedChars(prev => prev + 1);
+      }, delay);
+      return () => clearTimeout(timer);
+    } else {
+      const timer = setTimeout(() => {
+        setDisplayedLines(prev => prev + 1);
+        setDisplayedChars(0);
+      }, currentLine === '' ? 100 : 200);
+      return () => clearTimeout(timer);
+    }
+  }, [displayedLines, displayedChars, lines]);
+
+  // Auto-scroll
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [displayedLines, displayedChars]);
+
+  // Close on ESC or click backdrop
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Enter') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="terminal-overlay" onClick={onClose}>
+      <div className="terminal-box" onClick={e => e.stopPropagation()}>
+        <div className="terminal-header">
+          <span className="terminal-dots">
+            <span className="terminal-dot terminal-dot-red" />
+            <span className="terminal-dot terminal-dot-yellow" />
+            <span className="terminal-dot terminal-dot-green" />
+          </span>
+          <span className="terminal-title">TERMINAL — volodka@memory:~</span>
+        </div>
+        <div className="terminal-body" ref={containerRef}>
+          {lines.slice(0, displayedLines).map((line, i) => (
+            <div key={i} className="terminal-line">{line}</div>
+          ))}
+          {displayedLines < lines.length && lines[displayedLines] && (
+            <div className="terminal-line">
+              {lines[displayedLines].slice(0, displayedChars)}
+              <span className="terminal-cursor">█</span>
+            </div>
+          )}
+        </div>
+        <div className="terminal-footer">
+          [ESC / Enter — закрыть]
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tooltip Overlay ───
+function TooltipOverlay({ label, description, onClose }: {
+  label: string; description: string; onClose: () => void;
+}) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 8000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'e') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="tooltip-overlay" onClick={onClose}>
+      <div className="tooltip-box" onClick={e => e.stopPropagation()}>
+        <div className="tooltip-title">{label}</div>
+        <div className="tooltip-desc">{description}</div>
+        <div className="tooltip-close">[закрыть]</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Exploration HUD ───
 function ExplorationHUD() {
   const phase = useGameStore(s => s.phase);
-  const playerReady = useGameStore(s => s.playerReady);
   const hoveredObject = useGameStore(s => s.hoveredObject);
 
-  const [showTooltip, setShowTooltip] = useState(false);
-  const [tooltipData, setTooltipData] = useState<{ label: string; description: string } | null>(null);
+  const [overlay, setOverlay] = useState<{
+    type: 'tooltip' | 'terminal';
+    label: string;
+    description?: string;
+    terminalText?: string[];
+  } | null>(null);
+
+  const closeOverlay = useCallback(() => setOverlay(null), []);
 
   const handleInteraction = useCallback((target: string) => {
     const obj = EXPLORATION_SCENE.interactables.find(o => o.id === target);
-    if (obj) {
-      setTooltipData({ label: obj.label, description: obj.description });
-      setShowTooltip(true);
-      setTimeout(() => setShowTooltip(false), 5000);
+    if (!obj) return;
+
+    if (obj.terminalText) {
+      setOverlay({
+        type: 'terminal',
+        label: obj.label,
+        terminalText: obj.terminalText,
+      });
+    } else {
+      setOverlay({
+        type: 'tooltip',
+        label: obj.label,
+        description: obj.description,
+      });
     }
   }, []);
 
@@ -126,7 +243,7 @@ function ExplorationHUD() {
       </div>
 
       {/* Interaction hint */}
-      {hoveredObject && (
+      {hoveredObject && !overlay && (
         <div className="interact-hint">
           <span className="interact-key">E</span>
           <span className="interact-label">
@@ -135,19 +252,18 @@ function ExplorationHUD() {
         </div>
       )}
 
-      {/* Tooltip */}
-      {showTooltip && tooltipData && (
-        <div className="tooltip-overlay" onClick={() => setShowTooltip(false)}>
-          <div className="tooltip-box">
-            <div className="tooltip-title">{tooltipData.label}</div>
-            <div className="tooltip-desc">{tooltipData.description}</div>
-            <div className="tooltip-close">[закрыть]</div>
-          </div>
-        </div>
+      {/* Terminal overlay */}
+      {overlay?.type === 'terminal' && overlay.terminalText && (
+        <TerminalOverlay lines={overlay.terminalText} onClose={closeOverlay} />
+      )}
+
+      {/* Tooltip overlay */}
+      {overlay?.type === 'tooltip' && overlay.description && (
+        <TooltipOverlay label={overlay.label} description={overlay.description} onClose={closeOverlay} />
       )}
 
       {/* Controls hint */}
-      {!showTooltip && (
+      {!overlay && (
         <div className="controls-hint">
           WASD — движение &nbsp;|&nbsp; Мышь — камера &nbsp;|&nbsp; E — взаимодействие
         </div>
@@ -193,10 +309,8 @@ export default function GameCanvas() {
         style={{ background: '#000' }}
       >
         <Suspense fallback={null}>
-          {/* Shared camera controller */}
           <FollowCamera />
 
-          {/* Post-processing */}
           <EffectComposer>
             <Bloom
               luminanceThreshold={0.4}
@@ -207,10 +321,8 @@ export default function GameCanvas() {
             <Vignette eskil={false} offset={0.1} darkness={0.8} />
           </EffectComposer>
 
-          {/* Intro Scene — Matrix Rain + Poem */}
           {phase === 'intro' && <IntroScene />}
 
-          {/* Exploration Scene — Physics + Room + Player */}
           {(phase === 'exploration' || phase === 'intro-to-explore') && (
             <Physics gravity={[0, -9.81, 0]}>
               <ExplorationRoom />

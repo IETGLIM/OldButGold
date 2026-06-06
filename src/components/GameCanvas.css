@@ -1,0 +1,293 @@
+/* ─── Game Canvas Styles ─── */
+/* Cyberpunk terminal aesthetic */
+
+.game-container {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background: #000;
+}
+
+/* Scanline overlay */
+.game-container::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 255, 65, 0.012) 2px,
+    rgba(0, 255, 65, 0.012) 4px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* ─── Loading Screen ─── */
+
+.loading-screen {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #020208;
+  gap: 16px;
+}
+
+.loading-title {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 48px;
+  font-weight: 900;
+  color: #00ff41;
+  letter-spacing: 12px;
+  text-shadow: 0 0 30px rgba(0, 255, 65, 0.4), 0 0 60px rgba(0, 255, 65, 0.2);
+  animation: titleGlitch 4s ease-in-out infinite;
+}
+
+@keyframes titleGlitch {
+  0%, 95%, 100% { transform: translateX(0); }
+  96% { transform: translateX(-3px) skewX(-1deg); }
+  97% { transform: translateX(2px) skewX(0.5deg); }
+  98% { transform: translateX(-1px); }
+  99% { transform: translateX(0); }
+}
+
+.loading-subtitle {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 12px;
+  color: rgba(0, 255, 65, 0.35);
+  letter-spacing: 8px;
+  margin-bottom: 16px;
+}
+
+.loading-text {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 14px;
+  color: #00ff41;
+  letter-spacing: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.loading-bracket {
+  color: #00aa33;
+}
+
+.loading-word {
+  animation: loadingPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes loadingPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.loading-cursor {
+  animation: cursorBlink 0.8s step-end infinite;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.loading-bar-track {
+  width: 280px;
+  height: 2px;
+  background: rgba(0, 255, 65, 0.1);
+  border: 1px solid rgba(0, 255, 65, 0.2);
+  overflow: hidden;
+}
+
+.loading-bar-fill {
+  height: 100%;
+  background: #00ff41;
+  box-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+  transition: width 0.15s ease-out;
+}
+
+.loading-hint {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.25);
+  letter-spacing: 2px;
+  margin-top: 8px;
+}
+
+/* ─── Transition Overlay ─── */
+
+.transition-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: #000;
+  pointer-events: none;
+  z-index: 50;
+  transition: opacity 0.8s ease-in-out;
+}
+
+/* ─── Intro HUD ─── */
+
+.intro-hud {
+  position: absolute;
+  bottom: 40px;
+  left: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.intro-hint {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 12px;
+  color: rgba(0, 255, 65, 0.4);
+  letter-spacing: 3px;
+  animation: hintPulse 3s ease-in-out infinite;
+}
+
+.intro-hint-bracket {
+  color: rgba(0, 255, 65, 0.2);
+}
+
+@keyframes hintPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.7; }
+}
+
+/* ─── Exploration HUD ─── */
+
+.exploration-hud {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.scene-title {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 11px;
+  color: rgba(0, 229, 255, 0.5);
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+
+.scene-bracket {
+  color: rgba(0, 229, 255, 0.25);
+}
+
+/* ─── Interaction Hint ─── */
+
+.interact-hint {
+  position: absolute;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.interact-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  color: #00e5ff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(0, 229, 255, 0.05);
+}
+
+.interact-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: rgba(0, 229, 255, 0.7);
+  letter-spacing: 2px;
+}
+
+/* ─── Tooltip ─── */
+
+.tooltip-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  z-index: 30;
+  animation: tooltipFadeIn 0.3s ease-out;
+}
+
+@keyframes tooltipFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.tooltip-box {
+  max-width: 420px;
+  padding: 24px;
+  background: rgba(5, 5, 10, 0.95);
+  border: 1px solid rgba(0, 255, 65, 0.15);
+  border-left: 3px solid #00ff41;
+  position: relative;
+}
+
+.tooltip-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: #00ff41;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+}
+
+.tooltip-desc {
+  font-family: 'Georgia', serif;
+  font-size: 14px;
+  color: rgba(200, 200, 200, 0.8);
+  line-height: 1.7;
+  font-style: italic;
+}
+
+.tooltip-close {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.2);
+  margin-top: 16px;
+  text-align: right;
+  letter-spacing: 1px;
+}
+
+/* ─── Controls Hint ─── */
+
+.controls-hint {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.15);
+  letter-spacing: 2px;
+  white-space: nowrap;
+}

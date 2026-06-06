@@ -1,291 +1,434 @@
-import React, { useRef, useMemo, useEffect, useState, forwardRef, useCallback } from 'react';
+import React, { useRef, useMemo, useEffect, useState, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { OPENING_POEM, MATRIX_DURATION, POEM_REVEAL_DELAY } from '@/data/poem';
+import { OPENING_POEM, POEM_REVEAL_DELAY } from '@/data/poem';
 import { useGameStore } from '@/store/gameStore';
 import { bus } from '@/engine/events';
 
-// ─── Poem Line ───
-// Rendered as a plane with canvas texture for crisp text
+// ─── Constants ───
+const RAIN_COLS = 50;
+const RAIN_ROWS = 40;
+const CHAR_SIZE = 0.18;
+const RAIN_CHARACTERS = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF';
+const ASSEMBLY_DURATION = 2000; // ms for chars to fly to poem position
+const LINE_SPACING = 0.45;
+const MATRIX_PHASE_MS = 5000; // how long rain falls before assembly begins
 
-const PoemLine = forwardRef<THREE.Mesh, {
-  text: string;
-  position: [number, number, number];
-  opacity: number;
-  active: boolean;
-  completed: boolean;
-}>(({ text, position, opacity, active, completed }, ref) => {
-  const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
+// ─── 3D Rain Character ───
+// Individual character that falls in 3D space, then can be "captured" to form poem text
 
+interface RainChar {
+  col: number;
+  row: number;        // position in column (0 = top)
+  speed: number;
+  charIndex: number;
+  phase: 'falling' | 'captured' | 'idle'; // idle = hasn't started yet
+  targetPos: THREE.Vector3 | null;  // where to fly to when captured
+  captureStart: number;             // timestamp when captured
+  captureFrom: THREE.Vector3;       // position when capture started
+  originalSpeed: number;
+}
+
+// ─── 3D Matrix Rain Field ───
+// Instanced mesh for all rain characters — true 3D particles
+
+function MatrixRainField({ poemRevealStep, poemFade }: { poemRevealStep: number; poemFade: number }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const startTimeRef = useRef(Date.now());
+
+  // Create all rain characters
+  const rainChars = useRef<RainChar[]>([]);
+  const totalChars = RAIN_COLS * RAIN_ROWS;
+
+  // Pre-calculate poem character target positions
+  const poemTargets = useMemo(() => {
+    const targets: { pos: THREE.Vector3; charIndex: number; lineIndex: number; charInLine: number }[] = [];
+    const nonEmptyLines = OPENING_POEM.filter(l => l.trim() !== '');
+    const startY = (nonEmptyLines.length * LINE_SPACING) / 2;
+    let y = startY;
+    let lineIdx = 0;
+
+    for (let i = 0; i < OPENING_POEM.length; i++) {
+      const line = OPENING_POEM[i];
+      if (line.trim() === '') {
+        y -= 0.2;
+        lineIdx++;
+        continue;
+      }
+      // Center the line
+      const lineChars = line.length;
+      const xOffset = -(lineChars * CHAR_SIZE) / 2;
+      for (let c = 0; c < lineChars; c++) {
+        targets.push({
+          pos: new THREE.Vector3(xOffset + c * CHAR_SIZE, y, 0),
+          charIndex: 0, // will be set during capture
+          lineIndex: lineIdx,
+          charInLine: c,
+        });
+      }
+      y -= LINE_SPACING;
+      lineIdx++;
+    }
+    return targets;
+  }, []);
+
+  // Initialize rain characters
   useEffect(() => {
-    if (text.trim() === '') return;
+    const chars: RainChar[] = [];
+    for (let col = 0; col < RAIN_COLS; col++) {
+      for (let row = 0; row < RAIN_ROWS; row++) {
+        const x = (col - RAIN_COLS / 2) * CHAR_SIZE * 1.2;
+        const z = -Math.random() * 15 - 2; // spread in depth
+        const startY_pos = (RAIN_ROWS - row) * CHAR_SIZE * 1.5 + Math.random() * 5;
+        const speed = 0.5 + Math.random() * 1.5;
+        chars.push({
+          col,
+          row,
+          speed,
+          charIndex: Math.floor(Math.random() * RAIN_CHARACTERS.length),
+          phase: Math.random() < 0.7 ? 'falling' : 'idle', // stagger start
+          targetPos: null,
+          captureStart: 0,
+          captureFrom: new THREE.Vector3(x, startY_pos, z),
+          originalSpeed: speed,
+        });
+      }
+    }
+    rainChars.current = chars;
+  }, []);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = 1024;
-    canvas.height = 64;
+  // Track which poem chars have been captured
+  const capturedSet = useRef<Set<number>>(new Set());
+  const lastRevealStep = useRef(-1);
 
-    const ctx = canvas.getContext('2d')!;
-    ctx.clearRect(0, 0, 1024, 64);
+  // Assign targets when poem lines are revealed
+  useEffect(() => {
+    if (poemRevealStep <= lastRevealStep.current) return;
 
-    // Font: slightly different weight when completed vs active
-    const fontWeight = completed ? '700' : '600';
-    const fontSize = completed ? '28px' : '30px';
-    ctx.font = `${fontWeight} ${fontSize} "Courier New", monospace`;
-    ctx.fillStyle = completed ? '#00cc33' : '#00ff41';
-    ctx.shadowColor = '#00ff41';
-    ctx.shadowBlur = active ? 20 : 8;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 512, 32);
+    for (let lineIdx = lastRevealStep.current + 1; lineIdx <= poemRevealStep && lineIdx < OPENING_POEM.length; lineIdx++) {
+      const line = OPENING_POEM[lineIdx];
+      if (line.trim() === '') continue;
 
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.minFilter = THREE.LinearFilter;
-    setTexture(tex);
+      // Find target positions for this line
+      const lineTargets = poemTargets.filter(t => t.lineIndex === lineIdx);
 
-    return () => { tex.dispose(); };
-  }, [text, active, completed]);
+      // Find available falling characters to capture (prefer closer to Z=0)
+      const available = rainChars.current
+        .filter(c => c.phase === 'falling' && !capturedSet.current.has(rainChars.current.indexOf(c)))
+        .sort((a, b) => {
+          const aZ = a.captureFrom.z;
+          const bZ = b.captureFrom.z;
+          return Math.abs(bZ) - Math.abs(aZ); // closer to camera first
+        });
 
-  if (!texture || text.trim() === '') return null;
+      const now = Date.now();
+      for (let i = 0; i < lineTargets.length && i < available.length; i++) {
+        const char = available[i];
+        const target = lineTargets[i];
+        char.phase = 'captured';
+        char.targetPos = target.pos.clone();
+        char.captureStart = now + i * 30; // stagger captures slightly
+        char.charIndex = target.charInLine; // index into the actual poem text
+        capturedSet.current.add(rainChars.current.indexOf(char));
+      }
+
+      bus.emit('intro:poem-line', { index: lineIdx, text: OPENING_POEM[lineIdx] });
+    }
+    lastRevealStep.current = poemRevealStep;
+  }, [poemRevealStep, poemTargets]);
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current) return;
+
+    const now = Date.now();
+    const elapsed = (now - startTimeRef.current) / 1000;
+    const rainExtent = 12; // how tall the rain field is
+
+    for (let i = 0; i < rainChars.current.length; i++) {
+      const c = rainChars.current[i];
+
+      if (c.phase === 'idle') {
+        // Delayed start — activate randomly
+        if (Math.random() < 0.02) c.phase = 'falling';
+        dummy.position.set(0, -100, -100); // hide
+        dummy.scale.set(0, 0, 0);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+        continue;
+      }
+
+      if (c.phase === 'falling') {
+        // Fall in 3D space
+        const x = (c.col - RAIN_COLS / 2) * CHAR_SIZE * 1.2;
+        const baseY = (RAIN_ROWS - c.row) * CHAR_SIZE * 1.5;
+        c.captureFrom.y = baseY - (elapsed * c.speed * 2);
+        // Wrap around
+        if (c.captureFrom.y < -rainExtent) {
+          c.captureFrom.y += rainExtent * 2;
+          c.charIndex = Math.floor(Math.random() * RAIN_CHARACTERS.length);
+        }
+        // Slight X wobble
+        c.captureFrom.x = x + Math.sin(elapsed * 0.5 + c.col * 0.3) * 0.05;
+
+        dummy.position.copy(c.captureFrom);
+        const distToCenter = Math.abs(c.captureFrom.z + 7) / 15;
+        const scale = 0.6 + distToCenter * 0.4;
+        dummy.scale.set(scale, scale, scale);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+        continue;
+      }
+
+      if (c.phase === 'captured') {
+        const timeSinceCapture = now - c.captureStart;
+        if (timeSinceCapture < 0) {
+          // Not yet captured — keep falling
+          dummy.position.copy(c.captureFrom);
+          dummy.scale.set(0.6, 0.6, 0.6);
+          dummy.updateMatrix();
+          meshRef.current.setMatrixAt(i, dummy.matrix);
+          continue;
+        }
+
+        const t = Math.min(timeSinceCapture / ASSEMBLY_DURATION, 1);
+        // Eased interpolation (ease-out cubic)
+        const eased = 1 - Math.pow(1 - t, 3);
+
+        const pos = new THREE.Vector3().lerpVectors(c.captureFrom, c.targetPos!, eased);
+        // Add a slight arc trajectory
+        const arc = Math.sin(t * Math.PI) * 0.5;
+        pos.y += arc;
+        pos.z = c.captureFrom.z * (1 - eased); // converge to Z=0
+
+        dummy.position.copy(pos);
+        const scale = 0.6 + eased * 0.5; // grow as they arrive
+        dummy.scale.set(scale, scale, scale);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+      }
+    }
+
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
 
   return (
-    <mesh ref={ref} position={position}>
-      <planeGeometry args={[text.length * 0.28 + 0.6, 0.32]} />
+    <instancedMesh ref={meshRef} args={[undefined, undefined, totalChars]}>
+      <planeGeometry args={[CHAR_SIZE * 0.9, CHAR_SIZE * 0.9]} />
       <meshBasicMaterial
-        map={texture}
+        color="#00ff41"
         transparent
-        opacity={opacity}
+        opacity={0.9}
         depthWrite={false}
         side={THREE.DoubleSide}
       />
-    </mesh>
+    </instancedMesh>
   );
-});
-PoemLine.displayName = 'PoemLine';
+}
 
-// ─── Poem Reveal Controller ───
-// Reveals poem lines one by one after Matrix Rain finishes
+// ─── Poem Text Overlay ───
+// Canvas-based text that fades in as chars assemble at their positions
 
-function PoemReveal() {
-  const introStep = useGameStore(s => s.introStep);
-  const setIntroStep = useGameStore(s => s.setIntroStep);
-  const introMatrixDone = useGameStore(s => s.introMatrixDone);
-  const setIntroPoemComplete = useGameStore(s => s.setIntroPoemComplete);
-  const totalLines = OPENING_POEM.length;
-  const startTimeRef = useRef<number>(0);
-  const revealedRef = useRef(0);
+function PoemText({ revealStep, fade }: { revealStep: number; fade: number }) {
+  const [textures, setTextures] = useState<THREE.CanvasTexture[]>([]);
 
+  // Create textures for each line
   useEffect(() => {
-    if (!introMatrixDone) return;
-    startTimeRef.current = Date.now();
-    revealedRef.current = Math.min(introStep, totalLines);
-
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - startTimeRef.current;
-      const newLines = Math.min(Math.floor(elapsed / POEM_REVEAL_DELAY), totalLines);
-
-      if (newLines > revealedRef.current) {
-        for (let i = revealedRef.current; i < newLines; i++) {
-          bus.emit('intro:poem-line', { index: i, text: OPENING_POEM[i] });
-        }
-        revealedRef.current = newLines;
-        setIntroStep(newLines);
-
-        if (newLines >= totalLines) {
-          setIntroPoemComplete(true);
-          bus.emit('intro:poem-complete', {});
-          clearInterval(interval);
-        }
+    const newTextures: THREE.CanvasTexture[] = [];
+    for (let i = 0; i < OPENING_POEM.length; i++) {
+      const line = OPENING_POEM[i];
+      if (line.trim() === '') {
+        newTextures.push(null!);
+        continue;
       }
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, [introMatrixDone, totalLines, setIntroStep, setIntroPoemComplete]);
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d')!;
+      ctx.clearRect(0, 0, 1024, 64);
+      ctx.font = '600 28px "Courier New", monospace';
+      ctx.fillStyle = '#00ff41';
+      ctx.shadowColor = '#00ff41';
+      ctx.shadowBlur = 12;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(line, 512, 32);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter = THREE.LinearFilter;
+      newTextures.push(tex);
+    }
+    setTextures(newTextures);
+    return () => newTextures.forEach(t => t?.dispose());
+  }, []);
 
   const linePositions = useMemo(() => {
     const positions: [number, number, number][] = [];
     const nonEmptyCount = OPENING_POEM.filter(l => l.trim() !== '').length;
-    const startY = (nonEmptyCount * 0.4) / 2;
+    const startY = (nonEmptyCount * LINE_SPACING) / 2;
     let y = startY;
-    for (let i = 0; i < totalLines; i++) {
+    for (let i = 0; i < OPENING_POEM.length; i++) {
       if (OPENING_POEM[i].trim() === '') {
-        y -= 0.15;
+        y -= 0.2;
         positions.push([0, y, 0]);
       } else {
-        positions.push([0, y, 0]);
-        y -= 0.4;
+        positions.push([0, y, 0.05]); // slightly in front of rain
+        y -= LINE_SPACING;
       }
     }
     return positions;
   }, []);
 
   const [glowPulse, setGlowPulse] = useState(1);
-
   useFrame(({ clock }) => {
-    if (introStep < totalLines && introMatrixDone) {
-      setGlowPulse(Math.sin(clock.getElapsedTime() * 3) * 0.15 + 0.85);
-    }
+    setGlowPulse(Math.sin(clock.getElapsedTime() * 3) * 0.12 + 0.88);
   });
 
   return (
-    <group position={[0, 0, -3]}>
+    <group>
       {OPENING_POEM.map((line, i) => {
-        const isRevealed = i <= introStep;
-        const isActive = i === introStep && introMatrixDone;
-        const isCompleted = isRevealed && !isActive;
-        const op = isRevealed
-          ? (isActive ? glowPulse : 1.0)
-          : 0.0;
-
+        if (line.trim() === '' || !textures[i]) return null;
+        const isActive = i === revealStep;
+        const isRevealed = i <= revealStep;
         return (
-          <PoemLine
-            key={i}
-            text={line}
-            position={linePositions[i]}
-            opacity={op}
-            active={isActive}
-            completed={isCompleted}
-          />
+          <mesh key={i} position={linePositions[i]}>
+            <planeGeometry args={[line.length * 0.28 + 0.6, 0.32]} />
+            <meshBasicMaterial
+              map={textures[i]}
+              transparent
+              opacity={isRevealed ? (isActive ? glowPulse : 1) * fade : 0}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
         );
       })}
     </group>
   );
 }
 
-// ─── Matrix Rain Background ───
-// GLSL shader-based Matrix Rain with fade-out capability
-
-function MatrixRain({ fadeOut }: { fadeOut: number }) {
+// ─── 3D Matrix Rain Background Glow ───
+function RainBackground() {
+  const meshRef = useRef<THREE.Mesh>(null);
   const uniforms = useRef({
     uTime: { value: 0 },
-    uFade: { value: 1.0 },
   });
 
   useFrame(({ clock }) => {
     uniforms.current.uTime.value = clock.getElapsedTime();
-    uniforms.current.uFade.value = fadeOut;
   });
 
   return (
-    <mesh position={[0, 0, -5]}>
-      <planeGeometry args={[20, 14]} />
-      <shaderMaterial
-        vertexShader={`
-          varying vec2 vUv;
-          void main() {
-            vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `}
-        fragmentShader={`
-          precision mediump float;
-          uniform float uTime;
-          uniform float uFade;
-          varying vec2 vUv;
-
-          float hash(vec2 p) {
-            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-          }
-
-          void main() {
-            float col = floor(vUv.x * 60.0);
-            float rowOffset = hash(vec2(col, 0.0));
-            float speed = 0.4 + rowOffset * 0.8;
-            float t = fract(vUv.y * 35.0 + uTime * speed);
-
-            float head = smoothstep(0.93, 1.0, t);
-            float trail = smoothstep(0.0, 0.5, t) * (1.0 - smoothstep(0.5, 1.0, t));
-
-            float gv = 0.65 + rowOffset * 0.35;
-            vec3 headCol = vec3(0.5 * gv, 1.0 * gv, 0.35 * gv);
-            vec3 trailCol = vec3(0.0, 0.12 * gv, 0.0);
-
-            vec3 color = mix(trailCol, headCol, head * trail);
-            float edgeFade = smoothstep(0.0, 0.12, uv.y) * smoothstep(1.0, 0.88, uv.y);
-
-            // Vignette
-            vec2 center = vUv - 0.5;
-            float vignette = 1.0 - dot(center, center) * 0.8;
-
-            gl_FragColor = vec4(color, edgeFade * vignette * 0.28 * uFade);
-          }
-        `}
-        uniforms={uniforms.current}
-        transparent
-        depthWrite={false}
-      />
+    <mesh position={[0, 0, -10]}>
+      <planeGeometry args={[30, 20]} />
+      <meshBasicMaterial color="#020208" />
     </mesh>
   );
 }
 
 // ─── Full Intro Scene ───
-// Matrix Rain → Poem Lines → Fade → Transition
+// 3D Matrix Rain → Characters fly to form poem → Fade → Transition
 
 export function IntroScene() {
+  const { camera } = useThree();
   const setPhase = useGameStore(s => s.setPhase);
-  const introMatrixDone = useGameStore(s => s.introMatrixDone);
   const setIntroMatrixDone = useGameStore(s => s.setIntroMatrixDone);
   const introPoemComplete = useGameStore(s => s.introPoemComplete);
-  const setIntroStep = useGameStore(s => s.setIntroStep);
   const setIntroPoemComplete = useGameStore(s => s.setIntroPoemComplete);
-  const [matrixFade, setMatrixFade] = useState(1.0);
-  const [poemFade, setPoemFade] = useState(1.0);
+  const setIntroStep = useGameStore(s => s.setIntroStep);
+  const [poemRevealStep, setPoemRevealStep] = useState(-1);
+  const [poemFade, setPoemFade] = useState(1);
+  const [rainFade, setRainFade] = useState(1);
+  const phaseRef = useRef<'rain' | 'assembly' | 'complete'>('rain');
   const skipRef = useRef(false);
 
-  // Matrix Rain → fade out → start poem
+  // Phase 1: Pure rain for a while, then start assembly
   useEffect(() => {
-    const timer = setTimeout(() => {
+    const matrixTimer = setTimeout(() => {
+      phaseRef.current = 'assembly';
       setIntroMatrixDone(true);
       bus.emit('intro:matrix-done', {});
 
-      // Fade matrix rain out over 1.5s
-      const fadeStart = Date.now();
-      const fadeInterval = setInterval(() => {
-        const elapsed = Date.now() - fadeStart;
-        const t = Math.min(elapsed / 1500, 1);
-        setMatrixFade(1 - t);
-        if (t >= 1) clearInterval(fadeInterval);
-      }, 16);
-    }, MATRIX_DURATION);
-    return () => clearTimeout(timer);
-  }, [setIntroMatrixDone]);
+      // Start revealing lines one by one
+      let step = 0;
+      const revealInterval = setInterval(() => {
+        step++;
+        if (step >= OPENING_POEM.length) {
+          clearInterval(revealInterval);
+          setIntroPoemComplete(true);
+          bus.emit('intro:poem-complete', {});
+          phaseRef.current = 'complete';
+        } else {
+          setPoemRevealStep(step);
+          setIntroStep(step);
+        }
+      }, POEM_REVEAL_DELAY);
 
-  // Poem complete → fade poem out → transition
+      return () => clearInterval(revealInterval);
+    }, MATRIX_PHASE_MS);
+
+    return () => clearTimeout(matrixTimer);
+  }, [setIntroMatrixDone, setIntroPoemComplete, setIntroStep]);
+
+  // Phase 2: Poem complete → fade out → transition
   useEffect(() => {
     if (!introPoemComplete) return;
-    const fadeStart = Date.now();
-    const fadeInterval = setInterval(() => {
-      const elapsed = Date.now() - fadeStart;
-      const t = Math.min(elapsed / 2000, 1);
-      setPoemFade(1 - t);
-      if (t >= 1) {
-        clearInterval(fadeInterval);
-      }
+
+    // Fade rain
+    const rainFadeStart = Date.now();
+    const rainFadeInterval = setInterval(() => {
+      const t = Math.min((Date.now() - rainFadeStart) / 1500, 1);
+      setRainFade(1 - t);
+      if (t >= 1) clearInterval(rainFadeInterval);
     }, 16);
 
+    // Fade poem after a beat
+    const poemFadeStart = Date.now() + 800;
+    const poemFadeInterval = setInterval(() => {
+      const t = Math.min((Date.now() - poemFadeStart) / 1500, 1);
+      setPoemFade(1 - t);
+      if (t >= 1) clearInterval(poemFadeInterval);
+    }, 16);
+
+    // Camera pull-back
+    const cameraAnim = setInterval(() => {
+      const t = Math.min((Date.now() - rainFadeStart) / 2500, 1);
+      const eased = 1 - Math.pow(1 - t, 2);
+      camera.position.z = 6 + eased * 4;
+      camera.position.y = eased * -1;
+    }, 16);
+
+    // Transition
     const transitionTimer = setTimeout(() => {
       bus.emit('transition:start', { from: 'intro', to: 'exploration' });
       setPhase('intro-to-explore');
-    }, 2500);
+    }, 3000);
+
     return () => {
       clearTimeout(transitionTimer);
-      clearInterval(fadeInterval);
+      clearInterval(rainFadeInterval);
+      clearInterval(poemFadeInterval);
+      clearInterval(cameraAnim);
     };
-  }, [introPoemComplete, setPhase]);
+  }, [introPoemComplete, setPhase, camera]);
 
   // Skip handler
   useEffect(() => {
-    const handleSkip = useCallback(() => {
+    const handleSkip = () => {
       if (introPoemComplete || skipRef.current) return;
       skipRef.current = true;
-      bus.emit('intro:skip', {});
+
+      // Immediately reveal everything
+      phaseRef.current = 'complete';
       setIntroMatrixDone(true);
+      setPoemRevealStep(OPENING_POEM.length - 1);
       setIntroStep(OPENING_POEM.length);
-      setMatrixFade(0);
-      // Small delay then complete poem
+      setRainFade(0);
+
+      // Small delay then fade poem and transition
       setTimeout(() => {
         setIntroPoemComplete(true);
-      }, 300);
-    }, [introPoemComplete, setIntroMatrixDone, setIntroStep, setIntroPoemComplete]);
+      }, 500);
+    };
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -297,29 +440,50 @@ export function IntroScene() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [introPoemComplete, setIntroMatrixDone, setIntroStep, setIntroPoemComplete]);
 
+  // Camera animation during intro
+  useFrame(({ clock }) => {
+    if (phaseRef.current === 'rain') {
+      // Slow drift forward through rain
+      const t = clock.getElapsedTime();
+      camera.position.set(
+        Math.sin(t * 0.15) * 0.3,
+        Math.cos(t * 0.1) * 0.2,
+        6 - Math.min(t * 0.15, 1.5)
+      );
+      camera.lookAt(0, 0, 0);
+    } else if (phaseRef.current === 'assembly') {
+      // Camera holds steady, slight breathing
+      const t = clock.getElapsedTime();
+      camera.position.set(
+        Math.sin(t * 0.2) * 0.1,
+        Math.sin(t * 0.15) * 0.1,
+        4.5
+      );
+      camera.lookAt(0, 0, 0);
+    }
+  });
+
   return (
     <group>
-      {/* Background plane */}
-      <mesh position={[0, 0, -8]}>
-        <planeGeometry args={[30, 20]} />
-        <meshBasicMaterial color="#020208" />
+      {/* Deep background */}
+      <mesh position={[0, 0, -20]}>
+        <planeGeometry args={[40, 30]} />
+        <meshBasicMaterial color="#010108" />
       </mesh>
 
-      {/* Matrix Rain (fades out) */}
-      <MatrixRain fadeOut={matrixFade} />
-
-      {/* Poem Lines (fades out after complete) */}
-      <group>
-        <PoemReveal />
-      </group>
-
-      {/* Subtle bottom glow */}
-      <mesh position={[0, -4, -6]}>
-        <planeGeometry args={[16, 2]} />
-        <meshBasicMaterial color="#001a00" transparent opacity={0.4} />
+      {/* Atmospheric glow strips */}
+      <mesh position={[0, -5, -8]}>
+        <planeGeometry args={[20, 3]} />
+        <meshBasicMaterial color="#001200" transparent opacity={0.5} />
       </mesh>
 
-      <ambientLight intensity={0.06} />
+      {/* 3D Matrix Rain + Assembly */}
+      <MatrixRainField poemRevealStep={poemRevealStep} poemFade={poemFade} />
+
+      {/* Poem text overlay */}
+      <PoemText revealStep={poemRevealStep} fade={poemFade} />
+
+      <ambientLight intensity={0.05} />
     </group>
   );
 }

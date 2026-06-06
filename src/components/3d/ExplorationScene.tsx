@@ -41,6 +41,7 @@ export function Player() {
   const rigidBodyRef = useRef<RapierRigidBody>(null);
   const meshRef = useRef<THREE.Group>(null);
   const input = useKeyboardInput();
+  const { camera } = useThree();
   const setPlayerReady = useGameStore(s => s.setPlayerReady);
   const hoveredObject = useGameStore(s => s.hoveredObject);
 
@@ -48,7 +49,7 @@ export function Player() {
   const SPEED = 3.5;
   const JUMP_FORCE = 5.5;
   const DAMPING = 0.85;
-  const GROUND_Y = 1.0; // exact spawn Y (capsule sits on floor)
+  const GROUND_Y = 0.75; // capsule half-height (0.5) + collider offset (0.25)
 
   const grounded = useRef(false);
   const canJump = useRef(true);
@@ -216,7 +217,7 @@ export function ExplorationRoom() {
 
       {/* ── Floor ── */}
       <RigidBody type="fixed" colliders={false}>
-        <CuboidCollider args={[5, 0.05, 5]} position={[0, 0, 0]} />
+        <CuboidCollider args={[5, 0.05, 5]} position={[0, -0.05, 0]} />
       </RigidBody>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
         <planeGeometry args={[10, 10]} />
@@ -330,6 +331,7 @@ export function ExplorationRoom() {
         <CuboidCollider args={[5, 2.5, 0.1]} position={[0, 2.5, -5]} />
         <CuboidCollider args={[0.1, 2.5, 5]} position={[-5, 2.5, 0]} />
         <CuboidCollider args={[0.1, 2.5, 5]} position={[5, 2.5, 0]} />
+        <CuboidCollider args={[5, 2.5, 0.1]} position={[0, 2.5, 5]} />
       </RigidBody>
     </group>
   );
